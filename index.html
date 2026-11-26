@@ -71,7 +71,6 @@
       margin-bottom: 10px;
     }
 
-    /* Карточки залов с фото */
     .halls {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -130,7 +129,6 @@
       border-bottom-color: #2B2B2B;
     }
 
-    /* Поля ввода */
     input[type="date"],
     input[type="text"],
     input[type="tel"],
@@ -179,7 +177,6 @@
       color: var(--busy-text);
     }
 
-    /* Шкала часов */
     .timeline {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
@@ -240,7 +237,6 @@
       border-color: var(--accent);
     }
 
-    /* Кнопки */
     .btn-primary {
       width: 100%;
       height: 50px;
@@ -310,7 +306,7 @@
     <div class="eyebrow">RAYS PHOTO STUDIO</div>
     <h1>Бронювання залу</h1>
 
-    <!-- ШАГ 1: Выбор зала, даты и времени -->
+    <!-- ШАГ 1 -->
     <div id="step1" class="step active">
       <div class="section">
         <span class="label">Оберіть зал</span>
@@ -367,7 +363,7 @@
       <div class="status" id="status1"></div>
     </div>
 
-    <!-- ШАГ 2: Контакты и переход к оплате -->
+    <!-- ШАГ 2 -->
     <div id="step2" class="step">
       <div class="section">
         <button type="button" class="btn-secondary" id="backBtn" style="margin-top:0; margin-bottom:14px;">← Змінити час або зал</button>
@@ -394,12 +390,9 @@
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
-    // Настройки endpoints и фото
     const WEBHOOK_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
-    // Встав прямые HTTPS-ссылки на фото залов из дизайна сайта:
     const CYCLORAMA_IMG = "";
     const INTERIOR_IMG = "";
-    // Запасная ссылка на оплату, если Make не вернёт payment_url в ответе:
     const FALLBACK_PAYMENT_URL = "";
 
     const OPEN_HOUR = 9;
@@ -460,6 +453,22 @@
       }
     }
 
+    function normalizeBusyHours(raw) {
+      if (!raw) return [];
+      const list = Array.isArray(raw) ? raw : String(raw).split(",");
+      const hours = [];
+      for (const item of list) {
+        const match = String(item).trim().match(/\d+/);
+        if (match) {
+          const h = Number(match[0]);
+          if (!Number.isNaN(h) && h >= OPEN_HOUR && h < CLOSE_HOUR && !hours.includes(h)) {
+            hours.push(h);
+          }
+        }
+      }
+      return hours;
+    }
+
     function populateStartHours(preferredStart = null) {
       startSelect.innerHTML = "";
       let firstFree = null;
@@ -498,7 +507,6 @@
       if (startHour === null || Number.isNaN(startHour)) return;
 
       for (let endH = startHour + 1; endH <= CLOSE_HOUR; endH++) {
-        // Останавливаем список до занятого часа, чтобы нельзя было перешагнуть бронь
         if (busyHours.includes(endH - 1)) break;
 
         const opt = document.createElement("option");
@@ -552,7 +560,7 @@
           const text = await res.text();
           try {
             const data = JSON.parse(text);
-            busyHours = Array.isArray(data.busyHours) ? data.busyHours.map(Number) : [];
+            busyHours = normalizeBusyHours(data.busyHours);
           } catch (_) {
             busyHours = [];
           }
@@ -569,7 +577,6 @@
       populateStartHours();
     }
 
-    // Залы
     document.querySelectorAll(".hall-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".hall-btn").forEach(b => b.classList.remove("active"));
@@ -580,7 +587,6 @@
       });
     });
 
-    // Дата и время
     dateInput.value = getLocalToday();
     dateInput.min = getLocalToday();
     dateInput.addEventListener("change", loadAvailability);
@@ -593,7 +599,6 @@
       renderTimeline(Number(startSelect.value), Number(endSelect.value));
     });
 
-    // Шаг 1 -> Шаг 2
     toStep2Btn.addEventListener("click", () => {
       const startH = Number(startSelect.value);
       const endH = Number(endSelect.value);
@@ -619,7 +624,6 @@
       step1El.classList.add("active");
     });
 
-    // Поделиться номером в Telegram
     sharePhoneBtn.addEventListener("click", () => {
       if (tg && typeof tg.requestContact === "function") {
         tg.requestContact((shared, eventData) => {
@@ -636,7 +640,6 @@
       }
     });
 
-    // Оплата и отправка в Make
     payBtn.addEventListener("click", async () => {
       const nameVal = clientNameInput.value.trim();
       const phoneVal = clientPhoneInput.value.trim();
