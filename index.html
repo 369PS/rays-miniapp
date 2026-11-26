@@ -455,18 +455,34 @@
 
     function normalizeBusyHours(raw) {
       if (!raw) return [];
-      const list = Array.isArray(raw) ? raw : String(raw).split(",");
-      const hours = [];
-      for (const item of list) {
-        const match = String(item).trim().match(/\d+/);
-        if (match) {
-          const h = Number(match[0]);
-          if (!Number.isNaN(h) && h >= OPEN_HOUR && h < CLOSE_HOUR && !hours.includes(h)) {
-            hours.push(h);
+      const items = Array.isArray(raw) ? raw : String(raw).split(",");
+      const hours = new Set();
+
+      for (const item of items) {
+        const str = String(item).trim();
+        if (!str) continue;
+
+        // Раскрытие диапазона вида "12:00-15:00" или "12-15" -> часы 12, 13, 14
+        const rangeMatch = str.match(/^(\d{1,2})(?::\d{2})?\s*[-–—]\s*(\d{1,2})(?::\d{2})?$/);
+        if (rangeMatch) {
+          const startH = Number(rangeMatch[1]);
+          const endH = Number(rangeMatch[2]);
+          for (let h = startH; h < endH; h++) {
+            if (h >= OPEN_HOUR && h < CLOSE_HOUR) hours.add(h);
+          }
+          continue;
+        }
+
+        const singleMatch = str.match(/\d{1,2}/);
+        if (singleMatch) {
+          const h = Number(singleMatch[0]);
+          if (!Number.isNaN(h) && h >= OPEN_HOUR && h < CLOSE_HOUR) {
+            hours.add(h);
           }
         }
       }
-      return hours;
+
+      return Array.from(hours).sort((a, b) => a - b);
     }
 
     function populateStartHours(preferredStart = null) {
