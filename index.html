@@ -247,9 +247,24 @@
       background: var(--accent);
     }
 
+    /* Базовая подпись над слотами */
     .slot-label {
       position: relative;
       z-index: 2;
+      pointer-events: none;
+    }
+
+    /* Контрастный слой подписи поверх выбранных (чёрных) половин */
+    .slot-label-selected-clip {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-text);
+      pointer-events: none;
+      clip-path: inset(0 100% 0 0);
     }
 
     .slot-pill.full-busy .slot-label {
@@ -257,12 +272,16 @@
       text-decoration: line-through;
     }
 
-    .slot-pill.full-selected .slot-label {
-      color: var(--accent-text);
+    .slot-pill.full-selected .slot-label-selected-clip {
+      clip-path: inset(0 0 0 0);
     }
 
-    .slot-pill.half-selected .slot-label {
-      color: var(--text);
+    .slot-pill.half-left-selected .slot-label-selected-clip {
+      clip-path: inset(0 50% 0 0);
+    }
+
+    .slot-pill.half-right-selected .slot-label-selected-clip {
+      clip-path: inset(0 0 0 50%);
     }
 
     .legend {
@@ -463,7 +482,6 @@
 
     let selectedHall = "cyclorama";
     let selectedHallTitle = "Зал 1 — Циклорама";
-    // Массив занятых получасовых метрик: 11.0 = 11:00-11:30, 11.5 = 11:30-12:00
     let busyHalfHours = [];
 
     const imgCyclorama = document.getElementById("imgCyclorama");
@@ -623,7 +641,6 @@
       }
 
       if (endSelect.options.length > 0) {
-        // По умолчанию ставим +1 час (2 слота), если доступен, иначе +30 мин
         const defaultIdx = endSelect.options.length > 1 ? 1 : 0;
         endSelect.value = endSelect.options[defaultIdx].value;
       }
@@ -636,8 +653,8 @@
       const hasSel = startVal !== null && endVal !== null && !Number.isNaN(startVal) && !Number.isNaN(endVal) && endVal > startVal;
 
       for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
-        const leftSlot = h;        // h:00 — h:30
-        const rightSlot = h + 0.5; // h:30 — (h+1):00
+        const leftSlot = h;
+        const rightSlot = h + 0.5;
 
         const leftBusy = isHalfHourBusy(leftSlot);
         const rightBusy = isHalfHourBusy(rightSlot);
@@ -652,8 +669,10 @@
           pill.classList.add("full-busy");
         } else if (leftSel && rightSel) {
           pill.classList.add("full-selected");
-        } else if (leftSel || rightSel) {
-          pill.classList.add("half-selected");
+        } else if (leftSel) {
+          pill.classList.add("half-left-selected");
+        } else if (rightSel) {
+          pill.classList.add("half-right-selected");
         }
 
         const leftHalf = document.createElement("span");
@@ -666,13 +685,20 @@
         if (rightBusy) rightHalf.classList.add("busy");
         else if (rightSel) rightHalf.classList.add("selected");
 
+        const timeText = formatTimeFromFloat(h);
+
         const label = document.createElement("span");
         label.className = "slot-label";
-        label.textContent = formatTimeFromFloat(h);
+        label.textContent = timeText;
+
+        const selectedLabelClip = document.createElement("span");
+        selectedLabelClip.className = "slot-label-selected-clip";
+        selectedLabelClip.textContent = timeText;
 
         pill.appendChild(leftHalf);
         pill.appendChild(rightHalf);
         pill.appendChild(label);
+        pill.appendChild(selectedLabelClip);
         timelineEl.appendChild(pill);
       }
     }
@@ -814,16 +840,28 @@
       };
 
       try {
-        // 1. Записываем бронь напрямую в Google Calendar через Google Apps Script
         const calRes = await fetch(AVAILABILITY_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify(payload)
         });
 
+        let calData = null;
+        if (calRes.ok) {
+          const calText = await calRes.text();
+          try {
+            calData = JSON.parse(calText);
+          } catch (_) {}
+        }
+
+        if (calData && calData.ok === false) {
+          status2.textContent = "Помилка запису в календар: " + (calData.error || "перевірте налаштування скрипта");
+          payBtn.disabled = false;
+          return;
+        }
+
         let paymentUrl = FALLBACK_PAYMENT_URL;
 
-        // 2. При необходимости отправляем в Make (например, для уведомлений или оплаты)
         if (MAKE_BOOKING_URL) {
           try {
             const mkRes = await fetch(MAKE_BOOKING_URL, {
@@ -841,9 +879,7 @@
           } catch (_) {}
         }
 
-        if (calRes.ok) {
-          await loadAvailability();
-        }
+        await loadAvailability();
 
         if (paymentUrl) {
           if (tg && typeof tg.openLink === "function") {
