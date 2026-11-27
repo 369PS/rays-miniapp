@@ -306,7 +306,6 @@
     <div class="eyebrow">RAYS PHOTO STUDIO</div>
     <h1>Бронювання залу</h1>
 
-    <!-- ШАГ 1 -->
     <div id="step1" class="step active">
       <div class="section">
         <span class="label">Оберіть зал</span>
@@ -363,7 +362,6 @@
       <div class="status" id="status1"></div>
     </div>
 
-    <!-- ШАГ 2 -->
     <div id="step2" class="step">
       <div class="section">
         <button type="button" class="btn-secondary" id="backBtn" style="margin-top:0; margin-bottom:14px;">← Змінити час або зал</button>
@@ -387,20 +385,14 @@
   </div>
 
   <script>
-    const tg = window.Telegram?.WebApp;
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     if (tg) tg.expand();
 
-    // Проверка занятости через Google Apps Script (без траты операций Make)
     const AVAILABILITY_URL = "https://script.google.com/macros/s/AKfycbwpgM4LYMrjTPr_5GNrOqzzAhnafV9_5MaN-FuRu-ydtVNeziezz03ya78Y1c4RdiTvaw/exec";
-
-    // Отправка заявки на бронирование и оплату в Make
     const MAKE_BOOKING_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
 
-    // Прямые HTTPS-ссылки на фото залов (если пустые — блоки картинок скрываются автоматически)
     const CYCLORAMA_IMG = "";
     const INTERIOR_IMG = "";
-
-    // Запасная ссылка на оплату, если Make не вернёт payment_url
     const FALLBACK_PAYMENT_URL = "";
 
     const OPEN_HOUR = 9;
@@ -452,7 +444,7 @@
     }
 
     function autofillTelegramUser() {
-      const user = tg?.initDataUnsafe?.user;
+      const user = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
       if (user) {
         const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
         if (fullName && !clientNameInput.value) {
@@ -470,7 +462,7 @@
         const str = String(item).trim();
         if (!str) continue;
 
-        const rangeMatch = str.match(/^(\d{1,2})(?::\d{2})?\s*[-–—]\s*(\d{1,2})(?::\d{2})?\$/);
+        const rangeMatch = str.match(/^(\d{1,2})(?::\d{2})?\s*[-–—]\s*(\d{1,2})(?::\d{2})?$/);
         if (rangeMatch) {
           const startH = Number(rangeMatch[1]);
           const endH = Number(rangeMatch[2]);
@@ -489,10 +481,11 @@
         }
       }
 
-      return Array.from(hours).sort((a, b) => a - b);
+      return Array.from(hours).sort(function(a, b) { return a - b; });
     }
 
-    function populateStartHours(preferredStart = null) {
+    function populateStartHours(preferredStart) {
+      if (preferredStart === undefined) preferredStart = null;
       startSelect.innerHTML = "";
       let firstFree = null;
 
@@ -501,3 +494,242 @@
         if (!isBusy && firstFree === null) firstFree = h;
 
         const opt = document.createElement("option");
+        opt.value = String(h);
+        opt.textContent = isBusy ? pad(h) + " — зайнято" : pad(h);
+        opt.disabled = isBusy;
+        startSelect.appendChild(opt);
+      }
+
+      if (firstFree === null) {
+        startSelect.innerHTML = '<option value="">Немає вільних годин</option>';
+        endSelect.innerHTML = '<option value="">—</option>';
+        toStep2Btn.disabled = true;
+        renderTimeline(null, null);
+        return;
+      }
+
+      toStep2Btn.disabled = false;
+      const chosenStart =
+        preferredStart !== null && !busyHours.includes(Number(preferredStart))
+          ? Number(preferredStart)
+          : firstFree;
+
+      startSelect.value = String(chosenStart);
+      populateEndHours(chosenStart);
+    }
+
+    function populateEndHours(startHour) {
+      endSelect.innerHTML = "";
+      if (startHour === null || Number.isNaN(startHour)) return;
+
+      for (let endH = startHour + 1; endH <= CLOSE_HOUR; endH++) {
+        if (busyHours.includes(endH - 1)) break;
+
+        const opt = document.createElement("option");
+        opt.value = String(endH);
+        opt.textContent = pad(endH);
+        endSelect.appendChild(opt);
+      }
+
+      if (endSelect.options.length > 0) {
+        endSelect.value = endSelect.options[0].value;
+      }
+
+      renderTimeline(Number(startSelect.value), Number(endSelect.value));
+    }
+
+    function renderTimeline(startH, endH) {
+      timelineEl.innerHTML = "";
+      for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
+        const pill = document.createElement("div");
+        pill.className = "slot-pill";
+        pill.textContent = pad(h);
+
+        if (busyHours.includes(h)) {
+          pill.classList.add("busy");
+        } else if (startH !== null && endH !== null && h >= startH && h < endH) {
+          pill.classList.add("selected");
+        }
+
+        timelineEl.appendChild(pill);
+      }
+    }
+
+    async function loadAvailability() {
+      const dateVal = dateInput.value;
+      if (!dateVal) return;
+
+      status1.textContent = "Перевіряємо розклад...";
+      try {
+        const res = await fetch(AVAILABILITY_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            action: "check_availability",
+            date: dateVal,
+            hall: selectedHall,
+            hall_title: selectedHallTitle
+          })
+        });
+
+        if (res.ok) {
+          const text = await res.text();
+          try {
+            const data = JSON.parse(text);
+            busyHours = normalizeBusyHours(data.busyHours);
+          } catch (_) {
+            busyHours = [];
+          }
+          status1.textContent = "";
+        } else {
+          busyHours = [];
+          status1.textContent = "Не вдалося завантажити розклад, оберіть час вручну.";
+        }
+      } catch (_) {
+        busyHours = [];
+        status1.textContent = "";
+      }
+
+      populateStartHours();
+    }
+
+    document.querySelectorAll(".hall-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        document.querySelectorAll(".hall-btn").forEach(function(b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        selectedHall = btn.dataset.hall;
+        selectedHallTitle = btn.dataset.hallTitle;
+        loadAvailability();
+      });
+    });
+
+    dateInput.value = getLocalToday();
+    dateInput.min = getLocalToday();
+    dateInput.addEventListener("change", loadAvailability);
+
+    startSelect.addEventListener("change", function() {
+      populateEndHours(Number(startSelect.value));
+    });
+
+    endSelect.addEventListener("change", function() {
+      renderTimeline(Number(startSelect.value), Number(endSelect.value));
+    });
+
+    toStep2Btn.addEventListener("click", function() {
+      const startH = Number(startSelect.value);
+      const endH = Number(endSelect.value);
+      if (!dateInput.value || Number.isNaN(startH) || Number.isNaN(endH) || endH <= startH) {
+        status1.textContent = "Оберіть дату та коректний інтервал часу.";
+        return;
+      }
+
+      const hoursCount = endH - startH;
+      summaryBox.innerHTML =
+        "<div><strong>" + selectedHallTitle + "</strong></div>" +
+        "<div>Дата: " + dateInput.value + "</div>" +
+        "<div>Час: " + pad(startH) + " — " + pad(endH) + " (" + hoursCount + " год.)</div>";
+
+      step1El.classList.remove("active");
+      step2El.classList.add("active");
+      status2.textContent = "";
+    });
+
+    backBtn.addEventListener("click", function() {
+      step2El.classList.remove("active");
+      step1El.classList.add("active");
+    });
+
+    sharePhoneBtn.addEventListener("click", function() {
+      if (tg && typeof tg.requestContact === "function") {
+        tg.requestContact(function(shared, eventData) {
+          const phone = eventData && eventData.responseUnsafe && eventData.responseUnsafe.contact
+            ? eventData.responseUnsafe.contact.phone_number
+            : null;
+          if (shared && phone) {
+            clientPhoneInput.value = phone.startsWith("+") ? phone : "+" + phone;
+            status2.textContent = "Номер отримано з Telegram.";
+          } else {
+            status2.textContent = "Якщо номер не підставився автоматично, введіть його вручну.";
+          }
+        });
+      } else {
+        status2.textContent = "Введіть номер телефону вручну у полі вище.";
+      }
+    });
+
+    payBtn.addEventListener("click", async function() {
+      const nameVal = clientNameInput.value.trim();
+      const phoneVal = clientPhoneInput.value.trim();
+      const startH = Number(startSelect.value);
+      const endH = Number(endSelect.value);
+
+      if (!nameVal) {
+        status2.textContent = "Вкажіть ваше ім'я.";
+        return;
+      }
+      if (!phoneVal) {
+        status2.textContent = "Вкажіть номер телефону або поділіться ним.";
+        return;
+      }
+
+      payBtn.disabled = true;
+      status2.textContent = "Готуємо бронювання та посилання на оплату...";
+
+      const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
+
+      const payload = {
+        action: "proceed_to_payment",
+        hall: selectedHall,
+        hall_title: selectedHallTitle,
+        date: dateInput.value,
+        start_time: pad(startH),
+        end_time: pad(endH),
+        hours: endH - startH,
+        client_name: nameVal,
+        client_phone: phoneVal,
+        tg_user_id: tgUser ? tgUser.id : null,
+        tg_username: tgUser ? tgUser.username : null
+      };
+
+      try {
+        let paymentUrl = FALLBACK_PAYMENT_URL;
+
+        if (MAKE_BOOKING_URL) {
+          const res = await fetch(MAKE_BOOKING_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          if (res.ok) {
+            const text = await res.text();
+            try {
+              const data = JSON.parse(text);
+              if (data.payment_url) paymentUrl = data.payment_url;
+            } catch (_) {}
+          }
+        }
+
+        if (paymentUrl) {
+          if (tg && typeof tg.openLink === "function") {
+            tg.openLink(paymentUrl);
+          } else {
+            window.location.href = paymentUrl;
+          }
+        } else {
+          status2.textContent = "Дані відправлено. Підключіть посилання оплати (payment_url) для автоматичного переходу.";
+          payBtn.disabled = false;
+        }
+      } catch (_) {
+        status2.textContent = "Помилка з'єднання. Спробуйте ще раз.";
+        payBtn.disabled = false;
+      }
+    });
+
+    initImages();
+    autofillTelegramUser();
+    populateStartHours();
+    loadAvailability();
+  </script>
+</body>
+</html>
