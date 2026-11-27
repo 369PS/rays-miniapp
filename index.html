@@ -200,7 +200,6 @@
       color: var(--busy-text);
     }
 
-    /* Почасовые плашки с разделением на левую (:00-:30) и правую (:30-:00) половины */
     .timeline {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
@@ -548,8 +547,8 @@
       const set = new Set();
 
       if (data && Array.isArray(data.busySlots)) {
-        for (const item of data.busySlots) {
-          const str = String(item).trim();
+        for (let i = 0; i < data.busySlots.length; i++) {
+          const str = String(data.busySlots[i]).trim();
           const rangeMatch = str.match(/^(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})$/);
           if (rangeMatch) {
             const startF = Number(rangeMatch[1]) + (Number(rangeMatch[2]) >= 30 ? 0.5 : 0);
@@ -568,8 +567,8 @@
 
       if (set.size === 0 && data && data.busyHours) {
         const items = Array.isArray(data.busyHours) ? data.busyHours : String(data.busyHours).split(",");
-        for (const item of items) {
-          const str = String(item).trim();
+        for (let i = 0; i < items.length; i++) {
+          const str = String(items[i]).trim();
           if (!str) continue;
           const m = str.match(/\d{1,2}/);
           if (m) {
@@ -816,7 +815,7 @@
       }
 
       payBtn.disabled = true;
-      status2.textContent = "Створюємо бронювання в календарі...";
+      status2.textContent = "Створюємо бронювання та надсилаємо сповіщення...";
 
       const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
@@ -883,7 +882,7 @@
             window.location.href = paymentUrl;
           }
         } else {
-          status2.textContent = "Бронювання додано до календаря.";
+          status2.textContent = "Бронювання додано до календаря та надіслано в Telegram.";
           payBtn.disabled = false;
         }
       } catch (_) {
