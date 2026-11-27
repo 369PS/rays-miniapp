@@ -390,9 +390,17 @@
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
-    const WEBHOOK_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
+    // Проверка занятости через Google Apps Script (без траты операций Make)
+    const AVAILABILITY_URL = "https://script.google.com/macros/s/AKfycbwpgM4LYMrjTPr_5GNrOqzzAhnafV9_5MaN-FuRu-ydtVNeziezz03ya78Y1c4RdiTvaw/exec";
+
+    // Отправка заявки на бронирование и оплату в Make
+    const MAKE_BOOKING_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
+
+    // Прямые HTTPS-ссылки на фото залов (если пустые — блоки картинок скрываются автоматически)
     const CYCLORAMA_IMG = "";
     const INTERIOR_IMG = "";
+
+    // Запасная ссылка на оплату, если Make не вернёт payment_url
     const FALLBACK_PAYMENT_URL = "";
 
     const OPEN_HOUR = 9;
@@ -462,8 +470,7 @@
         const str = String(item).trim();
         if (!str) continue;
 
-        // Раскрытие диапазона вида "12:00-15:00" или "12-15" -> часы 12, 13, 14
-        const rangeMatch = str.match(/^(\d{1,2})(?::\d{2})?\s*[-–—]\s*(\d{1,2})(?::\d{2})?$/);
+        const rangeMatch = str.match(/^(\d{1,2})(?::\d{2})?\s*[-–—]\s*(\d{1,2})(?::\d{2})?\$/);
         if (rangeMatch) {
           const startH = Number(rangeMatch[1]);
           const endH = Number(rangeMatch[2]);
@@ -561,169 +568,6 @@
 
       status1.textContent = "Перевіряємо розклад...";
       try {
-        const res = await fetch(WEBHOOK_URL, {
+        const res = await fetch(AVAILABILITY_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "check_availability",
-            date: dateVal,
-            hall: selectedHall,
-            hall_title: selectedHallTitle
-          })
-        });
-
-        if (res.ok) {
-          const text = await res.text();
-          try {
-            const data = JSON.parse(text);
-            busyHours = normalizeBusyHours(data.busyHours);
-          } catch (_) {
-            busyHours = [];
-          }
-          status1.textContent = "";
-        } else {
-          busyHours = [];
-          status1.textContent = "Не вдалося завантажити розклад, оберіть час вручну.";
-        }
-      } catch (_) {
-        busyHours = [];
-        status1.textContent = "";
-      }
-
-      populateStartHours();
-    }
-
-    document.querySelectorAll(".hall-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".hall-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        selectedHall = btn.dataset.hall;
-        selectedHallTitle = btn.dataset.hallTitle;
-        loadAvailability();
-      });
-    });
-
-    dateInput.value = getLocalToday();
-    dateInput.min = getLocalToday();
-    dateInput.addEventListener("change", loadAvailability);
-
-    startSelect.addEventListener("change", () => {
-      populateEndHours(Number(startSelect.value));
-    });
-
-    endSelect.addEventListener("change", () => {
-      renderTimeline(Number(startSelect.value), Number(endSelect.value));
-    });
-
-    toStep2Btn.addEventListener("click", () => {
-      const startH = Number(startSelect.value);
-      const endH = Number(endSelect.value);
-      if (!dateInput.value || Number.isNaN(startH) || Number.isNaN(endH) || endH <= startH) {
-        status1.textContent = "Оберіть дату та коректний інтервал часу.";
-        return;
-      }
-
-      const hoursCount = endH - startH;
-      summaryBox.innerHTML = `
-        <div><strong>${selectedHallTitle}</strong></div>
-        <div>Дата: ${dateInput.value}</div>
-        <div>Час: ${pad(startH)} — ${pad(endH)} (${hoursCount} год.)</div>
-      `;
-
-      step1El.classList.remove("active");
-      step2El.classList.add("active");
-      status2.textContent = "";
-    });
-
-    backBtn.addEventListener("click", () => {
-      step2El.classList.remove("active");
-      step1El.classList.add("active");
-    });
-
-    sharePhoneBtn.addEventListener("click", () => {
-      if (tg && typeof tg.requestContact === "function") {
-        tg.requestContact((shared, eventData) => {
-          const phone = eventData?.responseUnsafe?.contact?.phone_number;
-          if (shared && phone) {
-            clientPhoneInput.value = phone.startsWith("+") ? phone : "+" + phone;
-            status2.textContent = "Номер отримано з Telegram.";
-          } else {
-            status2.textContent = "Якщо номер не підставився автоматично, введіть його вручну.";
-          }
-        });
-      } else {
-        status2.textContent = "Введіть номер телефону вручну у полі вище.";
-      }
-    });
-
-    payBtn.addEventListener("click", async () => {
-      const nameVal = clientNameInput.value.trim();
-      const phoneVal = clientPhoneInput.value.trim();
-      const startH = Number(startSelect.value);
-      const endH = Number(endSelect.value);
-
-      if (!nameVal) {
-        status2.textContent = "Вкажіть ваше ім'я.";
-        return;
-      }
-      if (!phoneVal) {
-        status2.textContent = "Вкажіть номер телефону або поділіться ним.";
-        return;
-      }
-
-      payBtn.disabled = true;
-      status2.textContent = "Готуємо бронювання та посилання на оплату...";
-
-      const payload = {
-        action: "proceed_to_payment",
-        hall: selectedHall,
-        hall_title: selectedHallTitle,
-        date: dateInput.value,
-        start_time: pad(startH),
-        end_time: pad(endH),
-        hours: endH - startH,
-        client_name: nameVal,
-        client_phone: phoneVal,
-        tg_user_id: tg?.initDataUnsafe?.user?.id || null,
-        tg_username: tg?.initDataUnsafe?.user?.username || null
-      };
-
-      try {
-        const res = await fetch(WEBHOOK_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        let paymentUrl = FALLBACK_PAYMENT_URL;
-        if (res.ok) {
-          const text = await res.text();
-          try {
-            const data = JSON.parse(text);
-            if (data.payment_url) paymentUrl = data.payment_url;
-          } catch (_) {}
-        }
-
-        if (paymentUrl) {
-          if (tg && typeof tg.openLink === "function") {
-            tg.openLink(paymentUrl);
-          } else {
-            window.location.href = paymentUrl;
-          }
-        } else {
-          status2.textContent = "Дані відправлено. Підключіть посилання оплати (payment_url) для автоматичного переходу.";
-          payBtn.disabled = false;
-        }
-      } catch (_) {
-        status2.textContent = "Помилка з'єднання. Спробуйте ще раз.";
-        payBtn.disabled = false;
-      }
-    });
-
-    initImages();
-    autofillTelegramUser();
-    populateStartHours();
-    loadAvailability();
-  </script>
-</body>
-</html>
+          headers: { "Content-Type": "text
