@@ -247,14 +247,12 @@
       background: var(--accent);
     }
 
-    /* Базовая подпись над слотами */
     .slot-label {
       position: relative;
       z-index: 2;
       pointer-events: none;
     }
 
-    /* Контрастный слой подписи поверх выбранных (чёрных) половин */
     .slot-label-selected-clip {
       position: absolute;
       inset: 0;
@@ -466,10 +464,7 @@
     const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     if (tg) tg.expand();
 
-    // Google Apps Script (/exec) — чтение занятых слотов и запись брони в календарь
-    const AVAILABILITY_URL = "https://script.google.com/macros/s/AKfycbwpgM4LYMrjTPr_5GNrOqzzAhnafV9_5MaN-FuRu-ydtVNeziezz03ya78Y1c4RdiTvaw/exec";
-
-    // Опциональный вебхук Make (если нужно дополнительно отправлять данные в Make/оплату)
+    const AVAILABILITY_URL = "https://script.google.com/macros/s/AKfycbzTXfcADRZC4qB9L3Zk4ZV6yS5t-NIboYpqFFHdJ35H_VC4CoXq5b3l2X_LodM_Iaorag/exec";
     const MAKE_BOOKING_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
 
     const CYCLORAMA_IMG = "";
