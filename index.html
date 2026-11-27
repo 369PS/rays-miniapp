@@ -395,4 +395,547 @@
 
           <button type="button" class="hall-btn" data-hall="interior" data-hall-title="Зал 2 — Інтер'єр">
             <img class="hall-thumb" id="imgInterior" alt="Інтер'єр" />
-            <span
+            <span class="hall-meta">
+              <span class="hall-num">Зал 2</span>
+              <span class="hall-name">Інтер'єр</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <label class="label" for="bookingDate">Дата зйомки</label>
+        <input type="date" id="bookingDate" />
+      </div>
+
+      <div class="section">
+        <span class="label">Час оренди (09:00 — 21:00)</span>
+        <div class="time-grid">
+          <div>
+            <label class="label" for="startSelect">З</label>
+            <div class="select-wrap">
+              <select id="startSelect"></select>
+            </div>
+          </div>
+          <div>
+            <label class="label" for="endSelect">До</label>
+            <div class="select-wrap">
+              <select id="endSelect"></select>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline" id="timeline"></div>
+        <div class="legend">
+          <span><i class="dot"></i> Вільно</span>
+          <span><i class="dot busy"></i> Заброньовано</span>
+          <span><i class="dot sel"></i> Обрано</span>
+        </div>
+      </div>
+
+      <button type="button" class="btn-primary" id="toStep2Btn">Забронювати</button>
+      <div class="status" id="status1"></div>
+    </div>
+
+    <div id="step2" class="step">
+      <div class="section">
+        <button type="button" class="btn-secondary" id="backBtn" style="margin-top:0; margin-bottom:14px;">← Змінити час або зал</button>
+        <div class="summary-box" id="summaryBox"></div>
+
+        <div class="field-group">
+          <label class="label" for="clientName">Ім'я</label>
+          <input type="text" id="clientName" placeholder="Введіть ваше ім'я" />
+        </div>
+
+        <div class="field-group">
+          <label class="label" for="clientPhone">Номер телефону</label>
+          <input type="tel" id="clientPhone" placeholder="+380 (__) ___ __ __" />
+          <button type="button" class="btn-secondary" id="sharePhoneBtn">Підтягнути / поділитися номером з Telegram</button>
+        </div>
+
+        <button type="button" class="btn-primary" id="payBtn">Перейти до оплати</button>
+        <div class="status" id="status2"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) tg.expand();
+
+    const AVAILABILITY_URL = "https://script.google.com/macros/s/AKfycbyQwK3SylDRa400NSE7_d1kE-Ix5iGEk6xCzt88zf6l8b2B3F1U-fW85HqxYRryObW4DQ/exec";
+    const MAKE_BOOKING_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
+
+    const CYCLORAMA_IMG = "";
+    const INTERIOR_IMG = "";
+    const FALLBACK_PAYMENT_URL = "";
+
+    const OPEN_HOUR = 9;
+    const CLOSE_HOUR = 21;
+    const STEP_HOURS = 0.5;
+
+    let selectedHall = "cyclorama";
+    let selectedHallTitle = "Зал 1 — Циклорама";
+    let busyHalfHours = [];
+
+    const imgCyclorama = document.getElementById("imgCyclorama");
+    const imgInterior = document.getElementById("imgInterior");
+    const dateInput = document.getElementById("bookingDate");
+    const startSelect = document.getElementById("startSelect");
+    const endSelect = document.getElementById("endSelect");
+    const timelineEl = document.getElementById("timeline");
+    const status1 = document.getElementById("status1");
+    const status2 = document.getElementById("status2");
+    const toStep2Btn = document.getElementById("toStep2Btn");
+    const step1El = document.getElementById("step1");
+    const step2El = document.getElementById("step2");
+    const backBtn = document.getElementById("backBtn");
+    const summaryBox = document.getElementById("summaryBox");
+    const clientNameInput = document.getElementById("clientName");
+    const clientPhoneInput = document.getElementById("clientPhone");
+    const sharePhoneBtn = document.getElementById("sharePhoneBtn");
+    const payBtn = document.getElementById("payBtn");
+
+    function initImages() {
+      if (CYCLORAMA_IMG) {
+        imgCyclorama.src = CYCLORAMA_IMG;
+      } else {
+        imgCyclorama.style.display = "none";
+      }
+      if (INTERIOR_IMG) {
+        imgInterior.src = INTERIOR_IMG;
+      } else {
+        imgInterior.style.display = "none";
+      }
+    }
+
+    function formatTimeFromFloat(val) {
+      const num = Number(val);
+      if (Number.isNaN(num)) return "";
+      const h = Math.floor(num);
+      const m = Math.abs((num % 1) - 0.5) < 0.01 ? "30" : "00";
+      return String(h).padStart(2, "0") + ":" + m;
+    }
+
+    function parseTimeToFloat(str) {
+      const s = String(str || "").trim();
+      const match = s.match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) return null;
+      return Number(match[1]) + (Number(match[2]) >= 30 ? 0.5 : 0);
+    }
+
+    function getLocalToday() {
+      const now = new Date();
+      const offset = now.getTimezoneOffset() * 60000;
+      return new Date(now - offset).toISOString().split("T")[0];
+    }
+
+    function ensureDateValue() {
+      if (!dateInput.value) {
+        dateInput.value = getLocalToday();
+      }
+      return dateInput.value;
+    }
+
+    function autofillTelegramUser() {
+      const user = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
+      if (user) {
+        const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
+        if (fullName && !clientNameInput.value) {
+          clientNameInput.value = fullName;
+        }
+      }
+    }
+
+    function isHalfHourBusy(t) {
+      return busyHalfHours.some(function(b) { return Math.abs(b - t) < 0.01; });
+    }
+
+    function normalizeBusySlots(data) {
+      const set = new Set();
+
+      if (data && Array.isArray(data.busySlots)) {
+        for (let i = 0; i < data.busySlots.length; i++) {
+          const str = String(data.busySlots[i]).trim();
+          const rangeMatch = str.match(/^(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})$/);
+          if (rangeMatch) {
+            const startF = Number(rangeMatch[1]) + (Number(rangeMatch[2]) >= 30 ? 0.5 : 0);
+            const endF = Number(rangeMatch[3]) + (Number(rangeMatch[4]) >= 30 ? 0.5 : 0);
+            for (let t = startF; t < endF - 0.001; t += 0.5) {
+              if (t >= OPEN_HOUR && t < CLOSE_HOUR) set.add(Number(t.toFixed(1)));
+            }
+            continue;
+          }
+          const singleF = parseTimeToFloat(str);
+          if (singleF !== null && singleF >= OPEN_HOUR && singleF < CLOSE_HOUR) {
+            set.add(Number(singleF.toFixed(1)));
+          }
+        }
+      }
+
+      if (set.size === 0 && data && data.busyHours) {
+        const items = Array.isArray(data.busyHours) ? data.busyHours : String(data.busyHours).split(",");
+        for (let i = 0; i < items.length; i++) {
+          const str = String(items[i]).trim();
+          if (!str) continue;
+          const m = str.match(/\d{1,2}/);
+          if (m) {
+            const h = Number(m[0]);
+            if (!Number.isNaN(h) && h >= OPEN_HOUR && h < CLOSE_HOUR) {
+              set.add(h);
+              set.add(h + 0.5);
+            }
+          }
+        }
+      }
+
+      return Array.from(set).sort(function(a, b) { return a - b; });
+    }
+
+    function populateStartHours(preferredStart) {
+      if (preferredStart === undefined) preferredStart = null;
+      startSelect.innerHTML = "";
+      let firstFree = null;
+
+      for (let t = OPEN_HOUR; t < CLOSE_HOUR; t += STEP_HOURS) {
+        const val = Number(t.toFixed(1));
+        const busy = isHalfHourBusy(val);
+        if (!busy && firstFree === null) firstFree = val;
+
+        const opt = document.createElement("option");
+        opt.value = String(val);
+        opt.textContent = busy ? formatTimeFromFloat(val) + " — зайнято" : formatTimeFromFloat(val);
+        opt.disabled = busy;
+        startSelect.appendChild(opt);
+      }
+
+      if (firstFree === null) {
+        startSelect.innerHTML = '<option value="">Немає вільного часу</option>';
+        endSelect.innerHTML = '<option value="">—</option>';
+        toStep2Btn.disabled = true;
+        renderTimeline(null, null);
+        return;
+      }
+
+      toStep2Btn.disabled = false;
+      const chosenStart =
+        preferredStart !== null && !isHalfHourBusy(Number(preferredStart))
+          ? Number(preferredStart)
+          : firstFree;
+
+      startSelect.value = String(chosenStart);
+      populateEndHours(chosenStart);
+    }
+
+    function populateEndHours(startVal) {
+      endSelect.innerHTML = "";
+      if (startVal === null || Number.isNaN(startVal)) return;
+
+      for (let endT = startVal + STEP_HOURS; endT <= CLOSE_HOUR + 0.001; endT += STEP_HOURS) {
+        const val = Number(endT.toFixed(1));
+        const prevSlot = Number((val - STEP_HOURS).toFixed(1));
+        if (isHalfHourBusy(prevSlot)) break;
+
+        const opt = document.createElement("option");
+        opt.value = String(val);
+        opt.textContent = formatTimeFromFloat(val);
+        endSelect.appendChild(opt);
+      }
+
+      if (endSelect.options.length > 0) {
+        const defaultIdx = endSelect.options.length > 1 ? 1 : 0;
+        endSelect.value = endSelect.options[defaultIdx].value;
+      }
+
+      renderTimeline(Number(startSelect.value), Number(endSelect.value));
+    }
+
+    function getResolvedTimeRange() {
+      let startVal = Number(startSelect.value);
+      let endVal = Number(endSelect.value);
+
+      if (Number.isNaN(startVal) || startSelect.value === "") {
+        for (let t = OPEN_HOUR; t < CLOSE_HOUR; t += STEP_HOURS) {
+          const val = Number(t.toFixed(1));
+          if (!isHalfHourBusy(val)) {
+            startVal = val;
+            break;
+          }
+        }
+      }
+
+      if (Number.isNaN(endVal) || endSelect.value === "" || endVal <= startVal) {
+        if (!Number.isNaN(startVal)) {
+          const nextSlot = Number((startVal + STEP_HOURS).toFixed(1));
+          endVal = nextSlot <= CLOSE_HOUR ? nextSlot : CLOSE_HOUR;
+        }
+      }
+
+      return { startVal: startVal, endVal: endVal };
+    }
+
+    function renderTimeline(startVal, endVal) {
+      timelineEl.innerHTML = "";
+      const hasSel = startVal !== null && endVal !== null && !Number.isNaN(startVal) && !Number.isNaN(endVal) && endVal > startVal;
+
+      for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
+        const leftSlot = h;
+        const rightSlot = h + 0.5;
+
+        const leftBusy = isHalfHourBusy(leftSlot);
+        const rightBusy = isHalfHourBusy(rightSlot);
+
+        const leftSel = hasSel && !leftBusy && leftSlot >= startVal - 0.001 && leftSlot < endVal - 0.001;
+        const rightSel = hasSel && !rightBusy && rightSlot >= startVal - 0.001 && rightSlot < endVal - 0.001;
+
+        const pill = document.createElement("div");
+        pill.className = "slot-pill";
+
+        if (leftBusy && rightBusy) {
+          pill.classList.add("full-busy");
+        } else if (leftSel && rightSel) {
+          pill.classList.add("full-selected");
+        } else if (leftSel) {
+          pill.classList.add("half-left-selected");
+        } else if (rightSel) {
+          pill.classList.add("half-right-selected");
+        }
+
+        const leftHalf = document.createElement("span");
+        leftHalf.className = "slot-half left";
+        if (leftBusy) leftHalf.classList.add("busy");
+        else if (leftSel) leftHalf.classList.add("selected");
+
+        const rightHalf = document.createElement("span");
+        rightHalf.className = "slot-half right";
+        if (rightBusy) rightHalf.classList.add("busy");
+        else if (rightSel) rightHalf.classList.add("selected");
+
+        const timeText = formatTimeFromFloat(h);
+
+        const label = document.createElement("span");
+        label.className = "slot-label";
+        label.textContent = timeText;
+
+        const selectedLabelClip = document.createElement("span");
+        selectedLabelClip.className = "slot-label-selected-clip";
+        selectedLabelClip.textContent = timeText;
+
+        pill.appendChild(leftHalf);
+        pill.appendChild(rightHalf);
+        pill.appendChild(label);
+        pill.appendChild(selectedLabelClip);
+        timelineEl.appendChild(pill);
+      }
+    }
+
+    async function loadAvailability() {
+      const dateVal = ensureDateValue();
+      if (!dateVal) return;
+
+      status1.textContent = "Перевіряємо розклад...";
+      try {
+        const res = await fetch(AVAILABILITY_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            action: "check_availability",
+            date: dateVal,
+            hall: selectedHall,
+            hall_title: selectedHallTitle
+          })
+        });
+
+        if (res.ok) {
+          const text = await res.text();
+          try {
+            const data = JSON.parse(text);
+            busyHalfHours = normalizeBusySlots(data);
+          } catch (_) {
+            busyHalfHours = [];
+          }
+          status1.textContent = "";
+        } else {
+          busyHalfHours = [];
+          status1.textContent = "Не вдалося завантажити розклад, оберіть час вручну.";
+        }
+      } catch (_) {
+        busyHalfHours = [];
+        status1.textContent = "";
+      }
+
+      populateStartHours();
+    }
+
+    document.querySelectorAll(".hall-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        document.querySelectorAll(".hall-btn").forEach(function(b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        selectedHall = btn.dataset.hall;
+        selectedHallTitle = btn.dataset.hallTitle;
+        loadAvailability();
+      });
+    });
+
+    dateInput.value = getLocalToday();
+    dateInput.min = getLocalToday();
+    dateInput.addEventListener("change", loadAvailability);
+
+    startSelect.addEventListener("change", function() {
+      populateEndHours(Number(startSelect.value));
+    });
+
+    endSelect.addEventListener("change", function() {
+      renderTimeline(Number(startSelect.value), Number(endSelect.value));
+    });
+
+    toStep2Btn.addEventListener("click", function() {
+      const dateVal = ensureDateValue();
+      const range = getResolvedTimeRange();
+      const startVal = range.startVal;
+      const endVal = range.endVal;
+
+      if (!dateVal || Number.isNaN(startVal) || Number.isNaN(endVal) || endVal <= startVal) {
+        status1.textContent = "Оберіть дату та коректний інтервал часу.";
+        return;
+      }
+
+      const durationHours = endVal - startVal;
+      summaryBox.innerHTML =
+        "<div><strong>" + selectedHallTitle + "</strong></div>" +
+        "<div>Дата: " + dateVal + "</div>" +
+        "<div>Час: " + formatTimeFromFloat(startVal) + " — " + formatTimeFromFloat(endVal) + " (" + durationHours + " год.)</div>";
+
+      step1El.classList.remove("active");
+      step2El.classList.add("active");
+      status2.textContent = "";
+    });
+
+    backBtn.addEventListener("click", function() {
+      step2El.classList.remove("active");
+      step1El.classList.add("active");
+    });
+
+    sharePhoneBtn.addEventListener("click", function() {
+      if (tg && typeof tg.requestContact === "function") {
+        tg.requestContact(function(shared, eventData) {
+          const phone = eventData && eventData.responseUnsafe && eventData.responseUnsafe.contact
+            ? eventData.responseUnsafe.contact.phone_number
+            : null;
+          if (shared && phone) {
+            clientPhoneInput.value = phone.startsWith("+") ? phone : "+" + phone;
+            status2.textContent = "Номер отримано з Telegram.";
+          } else {
+            status2.textContent = "Якщо номер не підставився автоматично, введіть його вручну.";
+          }
+        });
+      } else {
+        status2.textContent = "Введіть номер телефону вручну у полі вище.";
+      }
+    });
+
+    payBtn.addEventListener("click", async function() {
+      const nameVal = clientNameInput.value.trim();
+      const phoneVal = clientPhoneInput.value.trim();
+      const dateVal = ensureDateValue();
+      const range = getResolvedTimeRange();
+      const startVal = range.startVal;
+      const endVal = range.endVal;
+
+      if (!nameVal) {
+        status2.textContent = "Вкажіть ваше ім'я.";
+        return;
+      }
+      if (!phoneVal) {
+        status2.textContent = "Вкажіть номер телефону або поділіться ним.";
+        return;
+      }
+      if (!dateVal || Number.isNaN(startVal) || Number.isNaN(endVal) || endVal <= startVal) {
+        status2.textContent = "Не вказано дату або час. Поверніться на перший крок та оберіть слот.";
+        return;
+      }
+
+      payBtn.disabled = true;
+      status2.textContent = "Створюємо бронювання та надсилаємо сповіщення...";
+
+      const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
+
+      const payload = {
+        action: "create_booking",
+        hall: selectedHall,
+        hall_title: selectedHallTitle,
+        date: dateVal,
+        start_time: formatTimeFromFloat(startVal),
+        end_time: formatTimeFromFloat(endVal),
+        hours: endVal - startVal,
+        client_name: nameVal,
+        client_phone: phoneVal,
+        tg_user_id: tgUser ? tgUser.id : null,
+        tg_username: tgUser ? tgUser.username : null
+      };
+
+      try {
+        const calRes = await fetch(AVAILABILITY_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify(payload)
+        });
+
+        let calData = null;
+        if (calRes.ok) {
+          const calText = await calRes.text();
+          try {
+            calData = JSON.parse(calText);
+          } catch (_) {}
+        }
+
+        if (calData && calData.ok === false) {
+          status2.textContent = "Помилка запису в календар: " + (calData.error || "перевірте налаштування скрипта");
+          payBtn.disabled = false;
+          return;
+        }
+
+        let paymentUrl = FALLBACK_PAYMENT_URL;
+
+        if (MAKE_BOOKING_URL) {
+          try {
+            const mkRes = await fetch(MAKE_BOOKING_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            if (mkRes.ok) {
+              const mkText = await mkRes.text();
+              try {
+                const mkData = JSON.parse(mkText);
+                if (mkData.payment_url) paymentUrl = mkData.payment_url;
+              } catch (_) {}
+            }
+          } catch (_) {}
+        }
+
+        await loadAvailability();
+
+        if (paymentUrl) {
+          if (tg && typeof tg.openLink === "function") {
+            tg.openLink(paymentUrl);
+          } else {
+            window.location.href = paymentUrl;
+          }
+        } else {
+          status2.textContent = "Бронювання додано до календаря та надіслано в Telegram.";
+          payBtn.disabled = false;
+        }
+      } catch (_) {
+        status2.textContent = "Помилка з'єднання. Спробуйте ще раз.";
+        payBtn.disabled = false;
+      }
+    });
+
+    initImages();
+    autofillTelegramUser();
+    populateStartHours();
+    loadAvailability();
+  </script>
+</body>
+</html>
