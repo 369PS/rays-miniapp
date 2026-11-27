@@ -25,6 +25,11 @@
       border-radius: 0 !important;
     }
 
+    html, body {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
     body {
       margin: 0;
       padding: 24px 18px 40px;
@@ -37,6 +42,7 @@
 
     .container {
       max-width: 520px;
+      width: 100%;
       margin: 0 auto;
     }
 
@@ -60,6 +66,7 @@
     .section {
       border-top: 1px solid var(--line);
       padding: 18px 0;
+      min-width: 0;
     }
 
     .label {
@@ -87,6 +94,7 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      min-width: 0;
       transition: background 0.15s, color 0.15s;
     }
 
@@ -133,7 +141,10 @@
     input[type="text"],
     input[type="tel"],
     select {
+      display: block;
       width: 100%;
+      max-width: 100%;
+      min-width: 0;
       height: 46px;
       padding: 0 12px;
       font-family: inherit;
@@ -145,6 +156,12 @@
       outline: none;
     }
 
+    input[type="date"] {
+      -webkit-appearance: none;
+      appearance: none;
+      line-height: 44px;
+    }
+
     select {
       appearance: none;
       -webkit-appearance: none;
@@ -153,6 +170,7 @@
 
     .select-wrap {
       position: relative;
+      min-width: 0;
     }
 
     .select-wrap::after {
@@ -170,6 +188,11 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
+      min-width: 0;
+    }
+
+    .time-grid > div {
+      min-width: 0;
     }
 
     select option:disabled {
@@ -177,6 +200,7 @@
       color: var(--busy-text);
     }
 
+    /* Почасовые плашки с разделением на левую (:00-:30) и правую (:30-:00) половины */
     .timeline {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
@@ -185,25 +209,60 @@
     }
 
     .slot-pill {
+      position: relative;
       border: 1px solid var(--line);
-      padding: 6px 2px;
-      text-align: center;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       font-size: 11px;
       color: var(--text);
       background: transparent;
+      overflow: hidden;
+      user-select: none;
     }
 
-    .slot-pill.busy {
+    .slot-half {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 50%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .slot-half.left {
+      left: 0;
+    }
+
+    .slot-half.right {
+      right: 0;
+    }
+
+    .slot-half.busy {
       background: var(--busy-bg);
-      border-color: var(--busy-bg);
+    }
+
+    .slot-half.selected {
+      background: var(--accent);
+    }
+
+    .slot-label {
+      position: relative;
+      z-index: 2;
+    }
+
+    .slot-pill.full-busy .slot-label {
       color: var(--busy-text);
       text-decoration: line-through;
     }
 
-    .slot-pill.selected {
-      background: var(--accent);
-      border-color: var(--accent);
+    .slot-pill.full-selected .slot-label {
       color: var(--accent-text);
+    }
+
+    .slot-pill.half-selected .slot-label {
+      color: var(--text);
     }
 
     .legend {
@@ -334,7 +393,7 @@
       </div>
 
       <div class="section">
-        <span class="label">Час оренди (09:00 — 21:00, крок 1 година)</span>
+        <span class="label">Час оренди (09:00 — 21:00)</span>
         <div class="time-grid">
           <div>
             <label class="label" for="startSelect">З</label>
@@ -388,7 +447,10 @@
     const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     if (tg) tg.expand();
 
+    // Google Apps Script (/exec) — чтение занятых слотов и запись брони в календарь
     const AVAILABILITY_URL = "https://script.google.com/macros/s/AKfycbwpgM4LYMrjTPr_5GNrOqzzAhnafV9_5MaN-FuRu-ydtVNeziezz03ya78Y1c4RdiTvaw/exec";
+
+    // Опциональный вебхук Make (если нужно дополнительно отправлять данные в Make/оплату)
     const MAKE_BOOKING_URL = "https://hook.eu1.make.com/od3b3co8mr71bl85oz4eml4sd4nodfhh";
 
     const CYCLORAMA_IMG = "";
@@ -397,10 +459,12 @@
 
     const OPEN_HOUR = 9;
     const CLOSE_HOUR = 21;
+    const STEP_HOURS = 0.5;
 
     let selectedHall = "cyclorama";
     let selectedHallTitle = "Зал 1 — Циклорама";
-    let busyHours = [];
+    // Массив занятых получасовых метрик: 11.0 = 11:00-11:30, 11.5 = 11:30-12:00
+    let busyHalfHours = [];
 
     const imgCyclorama = document.getElementById("imgCyclorama");
     const imgInterior = document.getElementById("imgInterior");
@@ -433,8 +497,18 @@
       }
     }
 
-    function pad(h) {
-      return String(h).padStart(2, "0") + ":00";
+    function formatTimeFromFloat(val) {
+      const num = Number(val);
+      const h = Math.floor(num);
+      const m = Math.abs((num % 1) - 0.5) < 0.01 ? "30" : "00";
+      return String(h).padStart(2, "0") + ":" + m;
+    }
+
+    function parseTimeToFloat(str) {
+      const s = String(str || "").trim();
+      const match = s.match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) return null;
+      return Number(match[1]) + (Number(match[2]) >= 30 ? 0.5 : 0);
     }
 
     function getLocalToday() {
@@ -453,35 +527,49 @@
       }
     }
 
-    function normalizeBusyHours(raw) {
-      if (!raw) return [];
-      const items = Array.isArray(raw) ? raw : String(raw).split(",");
-      const hours = new Set();
+    function isHalfHourBusy(t) {
+      return busyHalfHours.some(function(b) { return Math.abs(b - t) < 0.01; });
+    }
 
-      for (const item of items) {
-        const str = String(item).trim();
-        if (!str) continue;
+    function normalizeBusySlots(data) {
+      const set = new Set();
 
-        const rangeMatch = str.match(/^(\d{1,2})(?::\d{2})?\s*[-–—]\s*(\d{1,2})(?::\d{2})?$/);
-        if (rangeMatch) {
-          const startH = Number(rangeMatch[1]);
-          const endH = Number(rangeMatch[2]);
-          for (let h = startH; h < endH; h++) {
-            if (h >= OPEN_HOUR && h < CLOSE_HOUR) hours.add(h);
+      if (data && Array.isArray(data.busySlots)) {
+        for (const item of data.busySlots) {
+          const str = String(item).trim();
+          const rangeMatch = str.match(/^(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})$/);
+          if (rangeMatch) {
+            const startF = Number(rangeMatch[1]) + (Number(rangeMatch[2]) >= 30 ? 0.5 : 0);
+            const endF = Number(rangeMatch[3]) + (Number(rangeMatch[4]) >= 30 ? 0.5 : 0);
+            for (let t = startF; t < endF - 0.001; t += 0.5) {
+              if (t >= OPEN_HOUR && t < CLOSE_HOUR) set.add(Number(t.toFixed(1)));
+            }
+            continue;
           }
-          continue;
-        }
-
-        const singleMatch = str.match(/\d{1,2}/);
-        if (singleMatch) {
-          const h = Number(singleMatch[0]);
-          if (!Number.isNaN(h) && h >= OPEN_HOUR && h < CLOSE_HOUR) {
-            hours.add(h);
+          const singleF = parseTimeToFloat(str);
+          if (singleF !== null && singleF >= OPEN_HOUR && singleF < CLOSE_HOUR) {
+            set.add(Number(singleF.toFixed(1)));
           }
         }
       }
 
-      return Array.from(hours).sort(function(a, b) { return a - b; });
+      if (set.size === 0 && data && data.busyHours) {
+        const items = Array.isArray(data.busyHours) ? data.busyHours : String(data.busyHours).split(",");
+        for (const item of items) {
+          const str = String(item).trim();
+          if (!str) continue;
+          const m = str.match(/\d{1,2}/);
+          if (m) {
+            const h = Number(m[0]);
+            if (!Number.isNaN(h) && h >= OPEN_HOUR && h < CLOSE_HOUR) {
+              set.add(h);
+              set.add(h + 0.5);
+            }
+          }
+        }
+      }
+
+      return Array.from(set).sort(function(a, b) { return a - b; });
     }
 
     function populateStartHours(preferredStart) {
@@ -489,19 +577,20 @@
       startSelect.innerHTML = "";
       let firstFree = null;
 
-      for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
-        const isBusy = busyHours.includes(h);
-        if (!isBusy && firstFree === null) firstFree = h;
+      for (let t = OPEN_HOUR; t < CLOSE_HOUR; t += STEP_HOURS) {
+        const val = Number(t.toFixed(1));
+        const busy = isHalfHourBusy(val);
+        if (!busy && firstFree === null) firstFree = val;
 
         const opt = document.createElement("option");
-        opt.value = String(h);
-        opt.textContent = isBusy ? pad(h) + " — зайнято" : pad(h);
-        opt.disabled = isBusy;
+        opt.value = String(val);
+        opt.textContent = busy ? formatTimeFromFloat(val) + " — зайнято" : formatTimeFromFloat(val);
+        opt.disabled = busy;
         startSelect.appendChild(opt);
       }
 
       if (firstFree === null) {
-        startSelect.innerHTML = '<option value="">Немає вільних годин</option>';
+        startSelect.innerHTML = '<option value="">Немає вільного часу</option>';
         endSelect.innerHTML = '<option value="">—</option>';
         toStep2Btn.disabled = true;
         renderTimeline(null, null);
@@ -510,7 +599,7 @@
 
       toStep2Btn.disabled = false;
       const chosenStart =
-        preferredStart !== null && !busyHours.includes(Number(preferredStart))
+        preferredStart !== null && !isHalfHourBusy(Number(preferredStart))
           ? Number(preferredStart)
           : firstFree;
 
@@ -518,39 +607,72 @@
       populateEndHours(chosenStart);
     }
 
-    function populateEndHours(startHour) {
+    function populateEndHours(startVal) {
       endSelect.innerHTML = "";
-      if (startHour === null || Number.isNaN(startHour)) return;
+      if (startVal === null || Number.isNaN(startVal)) return;
 
-      for (let endH = startHour + 1; endH <= CLOSE_HOUR; endH++) {
-        if (busyHours.includes(endH - 1)) break;
+      for (let endT = startVal + STEP_HOURS; endT <= CLOSE_HOUR + 0.001; endT += STEP_HOURS) {
+        const val = Number(endT.toFixed(1));
+        const prevSlot = Number((val - STEP_HOURS).toFixed(1));
+        if (isHalfHourBusy(prevSlot)) break;
 
         const opt = document.createElement("option");
-        opt.value = String(endH);
-        opt.textContent = pad(endH);
+        opt.value = String(val);
+        opt.textContent = formatTimeFromFloat(val);
         endSelect.appendChild(opt);
       }
 
       if (endSelect.options.length > 0) {
-        endSelect.value = endSelect.options[0].value;
+        // По умолчанию ставим +1 час (2 слота), если доступен, иначе +30 мин
+        const defaultIdx = endSelect.options.length > 1 ? 1 : 0;
+        endSelect.value = endSelect.options[defaultIdx].value;
       }
 
       renderTimeline(Number(startSelect.value), Number(endSelect.value));
     }
 
-    function renderTimeline(startH, endH) {
+    function renderTimeline(startVal, endVal) {
       timelineEl.innerHTML = "";
+      const hasSel = startVal !== null && endVal !== null && !Number.isNaN(startVal) && !Number.isNaN(endVal) && endVal > startVal;
+
       for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
+        const leftSlot = h;        // h:00 — h:30
+        const rightSlot = h + 0.5; // h:30 — (h+1):00
+
+        const leftBusy = isHalfHourBusy(leftSlot);
+        const rightBusy = isHalfHourBusy(rightSlot);
+
+        const leftSel = hasSel && !leftBusy && leftSlot >= startVal - 0.001 && leftSlot < endVal - 0.001;
+        const rightSel = hasSel && !rightBusy && rightSlot >= startVal - 0.001 && rightSlot < endVal - 0.001;
+
         const pill = document.createElement("div");
         pill.className = "slot-pill";
-        pill.textContent = pad(h);
 
-        if (busyHours.includes(h)) {
-          pill.classList.add("busy");
-        } else if (startH !== null && endH !== null && h >= startH && h < endH) {
-          pill.classList.add("selected");
+        if (leftBusy && rightBusy) {
+          pill.classList.add("full-busy");
+        } else if (leftSel && rightSel) {
+          pill.classList.add("full-selected");
+        } else if (leftSel || rightSel) {
+          pill.classList.add("half-selected");
         }
 
+        const leftHalf = document.createElement("span");
+        leftHalf.className = "slot-half left";
+        if (leftBusy) leftHalf.classList.add("busy");
+        else if (leftSel) leftHalf.classList.add("selected");
+
+        const rightHalf = document.createElement("span");
+        rightHalf.className = "slot-half right";
+        if (rightBusy) rightHalf.classList.add("busy");
+        else if (rightSel) rightHalf.classList.add("selected");
+
+        const label = document.createElement("span");
+        label.className = "slot-label";
+        label.textContent = formatTimeFromFloat(h);
+
+        pill.appendChild(leftHalf);
+        pill.appendChild(rightHalf);
+        pill.appendChild(label);
         timelineEl.appendChild(pill);
       }
     }
@@ -576,17 +698,17 @@
           const text = await res.text();
           try {
             const data = JSON.parse(text);
-            busyHours = normalizeBusyHours(data.busyHours);
+            busyHalfHours = normalizeBusySlots(data);
           } catch (_) {
-            busyHours = [];
+            busyHalfHours = [];
           }
           status1.textContent = "";
         } else {
-          busyHours = [];
+          busyHalfHours = [];
           status1.textContent = "Не вдалося завантажити розклад, оберіть час вручну.";
         }
       } catch (_) {
-        busyHours = [];
+        busyHalfHours = [];
         status1.textContent = "";
       }
 
@@ -616,18 +738,18 @@
     });
 
     toStep2Btn.addEventListener("click", function() {
-      const startH = Number(startSelect.value);
-      const endH = Number(endSelect.value);
-      if (!dateInput.value || Number.isNaN(startH) || Number.isNaN(endH) || endH <= startH) {
+      const startVal = Number(startSelect.value);
+      const endVal = Number(endSelect.value);
+      if (!dateInput.value || Number.isNaN(startVal) || Number.isNaN(endVal) || endVal <= startVal) {
         status1.textContent = "Оберіть дату та коректний інтервал часу.";
         return;
       }
 
-      const hoursCount = endH - startH;
+      const durationHours = endVal - startVal;
       summaryBox.innerHTML =
         "<div><strong>" + selectedHallTitle + "</strong></div>" +
         "<div>Дата: " + dateInput.value + "</div>" +
-        "<div>Час: " + pad(startH) + " — " + pad(endH) + " (" + hoursCount + " год.)</div>";
+        "<div>Час: " + formatTimeFromFloat(startVal) + " — " + formatTimeFromFloat(endVal) + " (" + durationHours + " год.)</div>";
 
       step1El.classList.remove("active");
       step2El.classList.add("active");
@@ -660,8 +782,8 @@
     payBtn.addEventListener("click", async function() {
       const nameVal = clientNameInput.value.trim();
       const phoneVal = clientPhoneInput.value.trim();
-      const startH = Number(startSelect.value);
-      const endH = Number(endSelect.value);
+      const startVal = Number(startSelect.value);
+      const endVal = Number(endSelect.value);
 
       if (!nameVal) {
         status2.textContent = "Вкажіть ваше ім'я.";
@@ -673,18 +795,18 @@
       }
 
       payBtn.disabled = true;
-      status2.textContent = "Готуємо бронювання та посилання на оплату...";
+      status2.textContent = "Створюємо бронювання в календарі...";
 
       const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
       const payload = {
-        action: "proceed_to_payment",
+        action: "create_booking",
         hall: selectedHall,
         hall_title: selectedHallTitle,
         date: dateInput.value,
-        start_time: pad(startH),
-        end_time: pad(endH),
-        hours: endH - startH,
+        start_time: formatTimeFromFloat(startVal),
+        end_time: formatTimeFromFloat(endVal),
+        hours: endVal - startVal,
         client_name: nameVal,
         client_phone: phoneVal,
         tg_user_id: tgUser ? tgUser.id : null,
@@ -692,22 +814,35 @@
       };
 
       try {
+        // 1. Записываем бронь напрямую в Google Calendar через Google Apps Script
+        const calRes = await fetch(AVAILABILITY_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify(payload)
+        });
+
         let paymentUrl = FALLBACK_PAYMENT_URL;
 
+        // 2. При необходимости отправляем в Make (например, для уведомлений или оплаты)
         if (MAKE_BOOKING_URL) {
-          const res = await fetch(MAKE_BOOKING_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
+          try {
+            const mkRes = await fetch(MAKE_BOOKING_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            if (mkRes.ok) {
+              const mkText = await mkRes.text();
+              try {
+                const mkData = JSON.parse(mkText);
+                if (mkData.payment_url) paymentUrl = mkData.payment_url;
+              } catch (_) {}
+            }
+          } catch (_) {}
+        }
 
-          if (res.ok) {
-            const text = await res.text();
-            try {
-              const data = JSON.parse(text);
-              if (data.payment_url) paymentUrl = data.payment_url;
-            } catch (_) {}
-          }
+        if (calRes.ok) {
+          await loadAvailability();
         }
 
         if (paymentUrl) {
@@ -717,7 +852,7 @@
             window.location.href = paymentUrl;
           }
         } else {
-          status2.textContent = "Дані відправлено. Підключіть посилання оплати (payment_url) для автоматичного переходу.";
+          status2.textContent = "Бронювання додано до календаря.";
           payBtn.disabled = false;
         }
       } catch (_) {
